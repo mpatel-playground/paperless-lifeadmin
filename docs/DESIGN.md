@@ -102,8 +102,23 @@ Every flow is safe to re-run: sync uses a cursor, extraction skips verified docu
 
 1. **MRZ:** if the OCR text holds passport or PR card machine-readable lines, parse them and verify their check digits. A pass gives confidence 1.0.
 2. **Patterns:** regex for labelled dates ("Expiry", "Exp", "Valid until") and known card formats.
-3. **LLM fallback:** send the OCR text to Ollama with a JSON schema (doc\_kind, holder, issue\_date, expiry\_date, confidence).
-4. Write results to Paperless custom fields. Below 0.8 confidence, add the `lifeadmin:verify` tag instead of trusting it.
+3. **LLM fallback:** send the OCR text to Ollama with a JSON schema (doc\_kind, holder, issue\_date, expiry\_date), temperature 0 and thinking off.
+4. **Score:** the add-on computes confidence itself from checks it can verify (see below).
+5. Write results to Paperless custom fields. Below 0.8 confidence, add the `lifeadmin:verify` tag instead of trusting it.
+
+#### Confidence scoring
+
+An LLM's self-reported confidence is not a measurement: in testing it stayed at 0.98 even when OCR had replaced digits with letters. So the model is never asked for a confidence, and the score comes from these signals instead:
+
+| Signal | Effect |
+| --- | --- |
+| **Method** | MRZ with valid check digits = 1.0. A regex match on a labelled date starts high; LLM-only starts lower. |
+| **Grounding** | An LLM date must appear in the OCR text, allowing for common OCR swaps (O→0, l→1, S→5, B→8). If it doesn't, the score drops below 0.8. |
+| **Agreement** | Regex and LLM finding the same date raises the score; disagreement sends the document to the verify queue. |
+| **Plausibility** | Expiry after issue, a validity period that fits the document kind (e.g. a Canadian passport is 5 or 10 years), and no implausibly distant dates. A failed check sends it to the verify queue. |
+| **OCR corrections** | A date that only matches after correcting OCR errors loses some confidence, so ambiguous readings get a human check. |
+
+The exact weights are set in Week 2 from the eval set, which includes OCR-noised samples and reports accuracy at each confidence level, so we can check whether 0.8 is a meaningful cut-off.
 
 ### 3. Reminders
 

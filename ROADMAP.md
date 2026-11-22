@@ -17,7 +17,7 @@ A Paperless user adds one container and gets:
 - Date regex patterns
 - Ollama fallback with JSON schema output
 - Write custom fields and the verify tag back to Paperless
-- Eval script: accuracy on a labelled synthetic test set
+- Eval script: accuracy on a labelled synthetic test set, including OCR-noised samples, reported at each confidence level
 - Incremental sync with cursor and backoff
 - Reminder scheduler, `.ics` feed, ntfy and email push
 - Catch-up check on wake
