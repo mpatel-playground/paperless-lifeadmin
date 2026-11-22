@@ -4,7 +4,7 @@ Guidance for Claude Code working in this repo.
 
 ## Before any task
 
-1. **Read `docs/DESIGN.md` and `.local/PLAN.md` first.** `docs/DESIGN.md` is the source of truth for architecture, repo structure, data model, core flows and security. `.local/PLAN.md` holds the build plan and is gitignored, so it may be missing on other machines; if it is, carry on without it and never commit it. `ROADMAP.md` defines what belongs in each version.
+1. **Read `docs/DESIGN.md`, `.local/PLAN.md` and `.local/CONTEXT.md` first.** `.local/CONTEXT.md` records decisions already made (dev setup, scope, working agreement); follow it. `docs/DESIGN.md` is the source of truth for architecture, repo structure, data model, core flows and security. `.local/PLAN.md` and `.local/CONTEXT.md` are gitignored, so they may be missing on other machines; if they are, carry on without them and never commit them. `ROADMAP.md` defines what belongs in each version.
 2. **v1 scope only.** Do not build anything `ROADMAP.md` puts in v1.1 or later. That means no application packs (`packs/` YAML, `src/lifeadmin/packs/engine.py`, `export.py`, `pack_run` / `pack_item` tables), no MCP server (`src/lifeadmin/mcp/`) and no folder mode (`sources/folder.py`). If a task seems to need them, stop and ask.
 3. **Show a plan before writing code.** Give a short plan (files to touch, approach, tests to add) and wait for approval before editing.
 
