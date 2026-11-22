@@ -1,0 +1,163 @@
+# Answer key for the synthetic eval set. Every name, number and date here is made up.
+#
+# Labelled fields (what extraction must get right): kind, holder, issue_date, expiry_date.
+# Other fields only feed the renderer (`number`, `birth_date`, `sex`, `lang`).
+# A missing date means the document doesn't have one; extraction should return null.
+# `lang = "fr"` renders French labels first, as on Quebec-style bilingual layouts.
+#
+# Regenerate the images with `make samples` after editing.
+
+# --- Passports (TD3 MRZ) ---
+
+[[sample]]
+id = "passport-01"
+kind = "passport"
+holder = "Élise Bergeron"
+number = "AK482913"
+birth_date = 1990-03-14
+sex = "F"
+issue_date = 2021-06-15
+expiry_date = 2031-06-15
+
+[[sample]]
+id = "passport-02"
+kind = "passport"
+holder = "Daniel Okafor"
+number = "HB205577"
+birth_date = 1985-11-02
+sex = "M"
+issue_date = 2022-01-20
+expiry_date = 2027-01-20  # 5-year passport, expires soon: reminder lead time applies
+
+[[sample]]
+id = "passport-03"
+kind = "passport"
+holder = "Priya Raman-Côté"
+number = "GP730148"
+birth_date = 1993-07-29
+sex = "F"
+issue_date = 2016-09-05
+expiry_date = 2026-09-05  # already expired
+lang = "fr"
+
+# --- PR cards (TD1 MRZ) ---
+
+[[sample]]
+id = "pr-card-01"
+kind = "pr_card"
+holder = "Daniel Okafor"
+number = "PA0391827"
+birth_date = 1985-11-02
+sex = "M"
+issue_date = 2023-04-11
+expiry_date = 2028-04-11
+
+[[sample]]
+id = "pr-card-02"
+kind = "pr_card"
+holder = "Priya Raman-Côté"
+number = "PA1174560"
+birth_date = 1993-07-29
+sex = "F"
+issue_date = 2022-02-28
+expiry_date = 2027-02-28
+lang = "fr"
+
+# --- Ontario driver's licences ---
+
+[[sample]]
+id = "drivers-licence-01"
+kind = "drivers_licence"
+holder = "Élise Bergeron"
+number = "B4172-39058-05314"
+birth_date = 1990-03-14
+sex = "F"
+issue_date = 2024-03-14
+expiry_date = 2029-03-14
+
+[[sample]]
+id = "drivers-licence-02"
+kind = "drivers_licence"
+holder = "Daniel Okafor"
+number = "O1638-27450-51102"
+birth_date = 1985-11-02
+sex = "M"
+issue_date = 2021-11-02
+expiry_date = 2026-11-02  # expired last month
+
+# --- Ontario health cards ---
+
+[[sample]]
+id = "health-card-01"
+kind = "health_card"
+holder = "Priya Raman-Côté"
+number = "5820-417-396-KT"
+birth_date = 1993-07-29
+sex = "F"
+issue_date = 2023-07-29
+expiry_date = 2028-07-29
+
+[[sample]]
+id = "health-card-02"
+kind = "health_card"
+holder = "Élise Bergeron"
+number = "7314-062-958"
+birth_date = 1990-03-14
+# Old red-and-white style card: no issue or expiry date printed.
+
+# --- Payslips (pay date is the issue date; no expiry) ---
+
+[[sample]]
+id = "payslip-01"
+kind = "payslip"
+holder = "Élise Bergeron"
+issue_date = 2026-10-16
+
+[[sample]]
+id = "payslip-02"
+kind = "payslip"
+holder = "Élise Bergeron"
+issue_date = 2026-10-30
+
+[[sample]]
+id = "payslip-03"
+kind = "payslip"
+holder = "Daniel Okafor"
+issue_date = 2026-10-23
+
+[[sample]]
+id = "payslip-04"
+kind = "payslip"
+holder = "Daniel Okafor"
+issue_date = 2026-11-06
+
+# --- T4 slips (no issue or expiry date) ---
+
+[[sample]]
+id = "t4-01"
+kind = "t4"
+holder = "Élise Bergeron"
+tax_year = 2025
+
+[[sample]]
+id = "t4-02"
+kind = "t4"
+holder = "Daniel Okafor"
+tax_year = 2024
+lang = "fr"
+
+# --- Notices of Assessment (date issued; no expiry) ---
+
+[[sample]]
+id = "noa-01"
+kind = "noa"
+holder = "Élise Bergeron"
+tax_year = 2025
+issue_date = 2026-04-28
+
+[[sample]]
+id = "noa-02"
+kind = "noa"
+holder = "Daniel Okafor"
+tax_year = 2024
+issue_date = 2025-05-09

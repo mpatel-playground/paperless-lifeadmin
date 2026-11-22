@@ -7,7 +7,7 @@ OLLAMA_MODEL ?= qwen3.5:9b
 VENV := .venv
 BIN := $(VENV)/bin
 
-.PHONY: up up-llm down logs pull-model install lint fmt test check
+.PHONY: up up-llm down logs pull-model install lint fmt test check samples seed
 
 up: ## Start Paperless + broker
 	$(COMPOSE) up -d
@@ -24,6 +24,12 @@ logs: ## Follow logs from all running services
 pull-model: ## Pull OLLAMA_MODEL into the native Ollama install
 	@command -v ollama >/dev/null || { echo "ollama not found: install it from https://ollama.com/download"; exit 1; }
 	ollama pull $(OLLAMA_MODEL)
+
+samples: ## Render the synthetic eval documents in evals/samples/
+	$(BIN)/python -m evals.generate
+
+seed: ## Upload evals/samples/ to the dev Paperless (needs PAPERLESS_TOKEN in .env)
+	$(BIN)/python -m evals.seed
 
 install: ## Create .venv with Python 3.12 and install the package with dev tools
 	python3.12 -m venv $(VENV)

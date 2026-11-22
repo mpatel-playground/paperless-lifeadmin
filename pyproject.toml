@@ -13,6 +13,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+    "pillow>=13.0",  # renders the synthetic eval samples
     "pytest>=8.3",
     "ruff>=0.8",
 ]
@@ -26,12 +27,14 @@ packages = ["src/lifeadmin"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Lets tests import the eval scripts as the `evals` package.
+pythonpath = ["."]
 addopts = "-ra --strict-markers"
 
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-src = ["src", "tests"]
+src = [".", "src", "tests"]
 
 [tool.ruff.lint]
 # E/W: pycodestyle, F: pyflakes, I: import sorting, B: bugbear (likely bugs),
