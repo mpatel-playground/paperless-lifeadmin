@@ -1,0 +1,67 @@
+# Local dev stack: Paperless-ngx (SQLite) + Valkey broker, with optional Ollama.
+#
+#   make up        Paperless + broker
+#   make up-llm    also start Ollama in Docker (CPU only on macOS; native Ollama is preferred)
+#
+# All data lives under ./.devdata/ (gitignored). Ports are bound to 127.0.0.1 only.
+# Settings are passed to Paperless by name, not via env_file, so the add-on's own
+# values in .env (PAPERLESS_TOKEN, PAPERLESS_URL, ...) never reach the container.
+
+services:
+  broker:
+    # Valkey is the Redis-compatible broker used by Paperless's official compose files.
+    image: docker.io/valkey/valkey:9.2.0-alpine
+    restart: unless-stopped
+    volumes:
+      - ./.devdata/valkey:/data
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  paperless:
+    image: ghcr.io/paperless-ngx/paperless-ngx:3.5.1
+    restart: unless-stopped
+    depends_on:
+      broker:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ./.devdata/paperless/data:/usr/src/paperless/data
+      - ./.devdata/paperless/media:/usr/src/paperless/media
+      - ./.devdata/paperless/consume:/usr/src/paperless/consume
+      - ./.devdata/paperless/export:/usr/src/paperless/export
+    environment:
+      PAPERLESS_REDIS: redis://broker:6379
+      PAPERLESS_DBENGINE: sqlite
+      PAPERLESS_TIME_ZONE: America/Toronto
+      # English and French ship with the image, so PAPERLESS_OCR_LANGUAGES is not needed.
+      PAPERLESS_OCR_LANGUAGE: eng+fra
+      PAPERLESS_SECRET_KEY: ${PAPERLESS_SECRET_KEY:?set PAPERLESS_SECRET_KEY in .env}
+      # Creates the superuser on first start only; later password changes here are ignored.
+      PAPERLESS_ADMIN_USER: ${PAPERLESS_ADMIN_USER:?set PAPERLESS_ADMIN_USER in .env}
+      PAPERLESS_ADMIN_PASSWORD: ${PAPERLESS_ADMIN_PASSWORD:?set PAPERLESS_ADMIN_PASSWORD in .env}
+    healthcheck:
+      # Same check as the image's Dockerfile, written out here for visibility.
+      test: ["CMD", "curl", "-fsSL", "--max-time", "2", "http://localhost:8000"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  ollama:
+    image: docker.io/ollama/ollama:0.40.17
+    profiles: ["llm"]
+    restart: unless-stopped
+    # Conflicts with a native Ollama on the same port; run one or the other.
+    ports:
+      - "127.0.0.1:11434:11434"
+    volumes:
+      - ./.devdata/ollama:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
