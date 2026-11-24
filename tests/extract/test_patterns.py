@@ -1,11 +1,11 @@
-"""Labelled date patterns. All names, numbers and dates are synthetic."""
+"""Labelled date and document-kind patterns. All names, numbers and dates are synthetic."""
 
 from datetime import date
 
 import pytest
 
 from evals.generate import document_lines, load_samples
-from lifeadmin.extract.patterns import DateMatch, find_dates
+from lifeadmin.extract.patterns import DateMatch, KindMatch, find_dates, find_kind
 
 
 def only(text: str) -> DateMatch:
@@ -260,3 +260,140 @@ def test_eval_samples(sample):
         [sample.expiry_date] if sample.expiry_date else []
     )
     assert not any(m.ocr_corrected or m.ambiguous for m in matches)
+
+
+# --- Document kind: card numbers ---
+
+
+@pytest.mark.parametrize(
+    "number",
+    [
+        "B4172-39058-05314",
+        "O1638-27450-51102",  # the first character is a letter: surname initial O
+        "B4172 39058 05314",  # OCR split the groups with spaces
+    ],
+)
+def test_drivers_licence_number(number):
+    assert find_kind(f"4d DL/NO. {number}") == KindMatch(
+        "drivers_licence", by_number=True, by_title=False, ocr_corrected=False
+    )
+
+
+@pytest.mark.parametrize("number", ["5820-417-396-KT", "7314-062-958", "7314 062 958"])
+def test_health_card_number(number):
+    assert find_kind(number) == KindMatch(
+        "health_card", by_number=True, by_title=False, ocr_corrected=False
+    )
+
+
+@pytest.mark.parametrize(
+    ("text", "kind"),
+    [
+        ("B4l72-39O58-O5314", "drivers_licence"),
+        ("84172-39058-05314", "drivers_licence"),  # surname initial B read as 8
+        ("582O-4l7-396-KT", "health_card"),
+    ],
+)
+def test_card_numbers_with_ocr_swaps_are_flagged(text, kind):
+    match = find_kind(text)
+    assert match.doc_kind == kind
+    assert match.ocr_corrected
+
+
+def test_one_clean_number_is_enough():
+    match = find_kind("5820-417-396-KT\n582O-4l7-396-KT")
+    assert match.doc_kind == "health_card"
+    assert not match.ocr_corrected
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "1234567890",  # bare digit runs: account numbers look the same
+        "B417239058053140",
+        "15820-417-396",  # inside a longer number
+        "5820-417-3961",
+        "XB4172-39058-05314",
+        "416-555-1234",  # a phone number
+        "2026-09-30 to 2026-10-13",
+        "SOIL-BOZO-ZIS",  # only digits after OCR swaps
+        "BSOIZ-OOIZS-SSOBI",
+    ],
+)
+def test_other_numbers_are_not_card_numbers(text):
+    assert find_kind(text) is None
+
+
+# --- Document kind: titles ---
+
+
+@pytest.mark.parametrize(
+    ("title", "kind"),
+    [
+        ("CANADA PASSPORT / PASSEPORT CANADA", "passport"),
+        ("PASSEPORT CANADA / CANADA PASSPORT", "passport"),
+        ("PASSPORT PASSEPORT", "passport"),
+        ("PERMANENT RESIDENT CARD", "pr_card"),
+        ("CARTE DE RÉSIDENT PERMANENT", "pr_card"),
+        ("CARTE DE RESIDENT PERMANENT", "pr_card"),
+        ("ONTARIO  DRIVER'S LICENCE", "drivers_licence"),
+        ("Driver’s License", "drivers_licence"),
+        ("PERMIS DE CONDUIRE", "drivers_licence"),
+        ("Ontario  Health / Santé", "health_card"),
+        ("Santé / Health", "health_card"),
+        ("ONTARIO SANTE", "health_card"),
+        ("Northwind Maple Ltd. - Earnings Statement", "payslip"),
+        ("Pay stub", "payslip"),
+        ("Payslip", "payslip"),
+        ("Talon de paie", "payslip"),
+        ("T4 Statement of Remuneration Paid", "t4"),
+        ("T4 État de la rémunération payée", "t4"),
+        ("Canada Revenue Agency - Notice of Assessment", "noa"),
+        ("Avis de cotisation", "noa"),
+    ],
+)
+def test_titles(title, kind):
+    assert find_kind(title) == KindMatch(kind, by_number=False, by_title=True, ocr_corrected=False)
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["passport photos required", "Health benefits", "Statement", "Assessment", "permis"],
+)
+def test_single_words_are_not_titles(text):
+    assert find_kind(text) is None
+
+
+def test_title_word_does_not_override_a_card_number():
+    match = find_kind("Bring passport photos\n4d DL/NO. B4172-39058-05314")
+    assert match.doc_kind == "drivers_licence"
+
+
+def test_title_and_number_agree():
+    match = find_kind("Ontario  Health / Santé\n5820-417-396-KT")
+    assert match == KindMatch("health_card", by_number=True, by_title=True, ocr_corrected=False)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Ontario  Health / Santé\nB4172-39058-05314",  # title and number disagree
+        "Earnings Statement\nNotice of Assessment",  # two titles
+        "B4172-39058-05314\n5820-417-396-KT",  # two number formats
+    ],
+)
+def test_conflicting_signals_give_no_kind(text):
+    assert find_kind(text) is None
+
+
+def test_no_kind_in_empty_text():
+    assert find_kind("") is None
+
+
+@pytest.mark.parametrize("sample", load_samples(), ids=lambda s: s.id)
+def test_eval_sample_kinds(sample):
+    text = "\n".join(line for line, _ in document_lines(sample))
+    match = find_kind(text)
+    assert match is not None
+    assert match.doc_kind == sample.kind
+    assert not match.ocr_corrected
