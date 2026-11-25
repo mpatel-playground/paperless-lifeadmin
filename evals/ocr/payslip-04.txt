@@ -1,0 +1,16 @@
+Northwind Maple Ltd. - Earnings Statement
+Employee: Daniel Okafor
+
+Pay period: 2026-10-22 to 2026-11-04
+
+Pay date: Nov 6, 2026
+
+Regular earnings 80.00h 2,846.15
+
+CPP contributions -158.22
+El premiums -46.68
+Federal income tax -301.44
+Ontario income tax -142.87
+Net pay 2,196.94
+
+SPECIMEN - synthetic test document / document d'essai fictif

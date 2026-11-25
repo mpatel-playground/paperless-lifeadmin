@@ -1,0 +1,16 @@
+T4 Statement of Remuneration Paid / T4 Etat de la rémunération payee
+Year / Année: 2025
+
+Employer's name / Nom de l'employeur: Northwind Maple Ltd.
+
+Employee's name / Nom de l'employé: ELISE BERGERON
+
+14 Employment income / Revenus d'emploi 71,480.00
+
+16 CPP contributions / Cotisations au RPC 3,867.50
+
+18 El premiums / Cotisations d'AE 1,049.12
+
+22 Income tax deducted / Impôt retenu 11,962.30
+
+SPECIMEN - synthetic test document / document d'essai fictif
