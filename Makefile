@@ -7,7 +7,7 @@ OLLAMA_MODEL ?= qwen3.5:9b
 VENV := .venv
 BIN := $(VENV)/bin
 
-.PHONY: up up-llm down logs pull-model install lint fmt test check samples seed
+.PHONY: up up-llm down logs pull-model install lint fmt test check samples seed eval-fetch eval
 
 up: ## Start Paperless + broker
 	$(COMPOSE) up -d
@@ -30,6 +30,12 @@ samples: ## Render the synthetic eval documents in evals/samples/
 
 seed: ## Upload evals/samples/ to the dev Paperless (needs PAPERLESS_TOKEN in .env)
 	$(BIN)/python -m evals.seed
+
+eval-fetch: ## Save the Paperless OCR text of each sample to evals/ocr/ (after make seed)
+	$(BIN)/python -m evals.fetch
+
+eval: ## Score MRZ, regex and LLM on evals/ocr/ (ARGS=--no-llm to skip Ollama)
+	$(BIN)/python -m evals.run $(ARGS)
 
 install: ## Create .venv with Python 3.12 and install the package with dev tools
 	python3.12 -m venv $(VENV)
