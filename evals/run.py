@@ -7,7 +7,11 @@ Paperless OCR text saved by ``make eval-fetch``, plus seeded noised copies of it
 Each method runs on its own, so the numbers show what MRZ, regex and the LLM are each
 worth. That is the input for the confidence scorer's weights: the "signals" section reports
 how often a method was right when some checkable condition held (regex and LLM agreed, a
-date needed OCR fixes, ...). The scorer, and accuracy at each confidence level, come later.
+date needed OCR fixes, ...).
+
+The ``scored`` method is the real pipeline: all three combined by
+``lifeadmin.extract.score``. Its cases are also grouped by computed confidence, to check
+that the verify cut-off means something: nothing at or above it should be wrong.
 
 How a field is scored:
 
@@ -20,6 +24,7 @@ How a field is scored:
 """
 
 import argparse
+import contextlib
 import json
 import sys
 import unicodedata
@@ -35,12 +40,17 @@ from evals.fetch import OCR_DIR
 from evals.generate import EVALS_DIR, Sample, load_samples
 from evals.noise import add_noise
 from lifeadmin.config import load_settings
-from lifeadmin.extract.llm import LlmBadResponse, LlmUnavailable, OllamaExtractor
+from lifeadmin.extract.llm import LlmBadResponse, LlmResult, LlmUnavailable, OllamaExtractor
 from lifeadmin.extract.mrz import parse_mrz
 from lifeadmin.extract.patterns import find_dates, find_kind
+from lifeadmin.extract.score import NO_EXPIRY_KINDS, VERIFY_BELOW, score
 
 RESULTS_PATH = EVALS_DIR / "results" / "latest.json"
 COPIES_PER_LEVEL = 3
+# Plausibility checks compare dates against "today"; a fixed day keeps runs comparable.
+EVAL_TODAY = date(2026, 11, 1)
+# Lower bounds of the confidence levels reported, highest first.
+LEVELS = (0.95, VERIFY_BELOW, 0.5, 0.0)
 GROUPS = ("clean", "light", "heavy")
 
 FieldName = Literal["doc_kind", "holder", "issue_date", "expiry_date"]
@@ -49,6 +59,7 @@ ATTEMPTS: dict[str, tuple[FieldName, ...]] = {
     "mrz": ("doc_kind", "holder", "expiry_date"),
     "regex": ("doc_kind", "issue_date", "expiry_date"),
     "llm": FIELDS,
+    "scored": FIELDS,  # all three combined by lifeadmin.extract.score
 }
 MRZ_KINDS = ("passport", "pr_card")
 
@@ -75,7 +86,7 @@ class Prediction:
     issue_date: date | None = None
     expiry_date: date | None = None
     # Extra facts a method reports, kept for the signal tallies.
-    confidence: float | None = None  # MRZ only
+    confidence: float | None = None  # MRZ and scored
     ocr_corrected: bool = False  # regex: the chosen expiry date needed OCR swaps undone
     expiry_candidates: tuple[date, ...] = ()  # regex: every labelled expiry date
     error: str | None = None  # LLM: the reply couldn't be used
@@ -157,14 +168,63 @@ def predict_regex(text: str) -> Prediction | None:
     )
 
 
-def llm_predictor(extractor: OllamaExtractor) -> Predictor:
+Extract = Callable[[str], LlmResult]
+
+
+def cached(extract: Extract) -> Extract:
+    """Call the LLM once per text, so ``llm`` and ``scored`` share one answer."""
+    seen: dict[str, LlmResult | LlmBadResponse] = {}
+
+    def wrapper(text: str) -> LlmResult:
+        if text not in seen:
+            try:
+                seen[text] = extract(text)
+            except LlmBadResponse as exc:
+                seen[text] = exc
+        result = seen[text]
+        if isinstance(result, LlmBadResponse):
+            raise result
+        return result
+
+    return wrapper
+
+
+def llm_predictor(extract: Extract) -> Predictor:
     def predict(text: str) -> Prediction:
         try:
-            r = extractor.extract(text)
+            r = extract(text)
         except LlmBadResponse as exc:
             return Prediction(error=str(exc))
         return Prediction(
             doc_kind=r.doc_kind, holder=r.holder, issue_date=r.issue_date, expiry_date=r.expiry_date
+        )
+
+    return predict
+
+
+def scored_predictor(extract: Extract | None, today: date = EVAL_TODAY) -> Predictor:
+    """The full pipeline: MRZ, regex and (if given) the LLM, combined by the scorer."""
+
+    def predict(text: str) -> Prediction:
+        llm = None
+        if extract is not None:
+            # A bad reply is scored as if the LLM gave nothing.
+            with contextlib.suppress(LlmBadResponse):
+                llm = extract(text)
+        r = score(
+            text,
+            mrz=parse_mrz(text),
+            dates=find_dates(text),
+            kind=find_kind(text),
+            llm=llm,
+            today=today,
+        )
+        return Prediction(
+            doc_kind=r.doc_kind,
+            holder=r.holder,
+            issue_date=r.issue_date,
+            expiry_date=r.expiry_date,
+            confidence=r.confidence,
         )
 
     return predict
@@ -311,10 +371,61 @@ def signals(
     return dict(t)
 
 
+@dataclass
+class Level:
+    """Scored cases at one confidence level. "Right": every field the confidence covers."""
+
+    low: float
+    high: float
+    right: int = 0
+    total: int = 0
+    wrong_cases: list[str] = field(default_factory=list)
+
+
+def covered_fields(kind: str) -> tuple[FieldName, ...]:
+    """The fields the scorer's confidence covers, as in ``lifeadmin.extract.score``."""
+    if kind in NO_EXPIRY_KINDS:
+        return ("doc_kind", "issue_date")
+    return ("doc_kind", "expiry_date")
+
+
+def confidence_levels(
+    cases: Iterable[Case],
+    rows: Iterable[Row],
+    raw: Mapping[tuple[str, str, str], Prediction | None],
+) -> list[Level]:
+    """Accuracy of the fields the confidence covers, at each confidence level."""
+    kinds = {c.sample.id: c.sample.kind for c in cases}
+    ok: dict[tuple[str, str], bool] = {}
+    for r in rows:
+        if r.method == "scored" and r.field in covered_fields(kinds[r.sample_id]):
+            key = (r.sample_id, r.variant)
+            ok[key] = ok.get(key, True) and r.outcome in ("correct", "null_ok")
+
+    bounds = [*LEVELS]
+    levels = [Level(lo, hi) for lo, hi in zip(bounds, [1.01, *bounds[:-1]], strict=True)]
+    for (sample_id, variant), right in ok.items():
+        pred = raw[(sample_id, variant, "scored")]
+        conf = pred.confidence if pred and pred.confidence is not None else 0.0
+        level = next(lv for lv in levels if conf >= lv.low)
+        level.total += 1
+        level.right += right
+        if not right:
+            level.wrong_cases.append(f"{sample_id}/{variant}")
+    return levels
+
+
+def accepted_but_wrong(levels: Iterable[Level]) -> list[str]:
+    """Cases at or above the verify cut-off whose kind or expiry is wrong. Should be none."""
+    return [c for lv in levels if lv.low >= VERIFY_BELOW for c in lv.wrong_cases]
+
+
 # --- Report ---
 
 
-def format_report(rows: Sequence[Row], tallies: Mapping[str, Tally]) -> str:
+def format_report(
+    rows: Sequence[Row], tallies: Mapping[str, Tally], levels: Sequence[Level] = ()
+) -> str:
     table = summarise(rows)
     out = [
         "Accuracy by method and field. Has value: correct / wrong / missing.",
@@ -333,6 +444,23 @@ def format_report(rows: Sequence[Row], tallies: Mapping[str, Tally]) -> str:
                     f"{method:<6} {f:<12} {group:<6} {c['correct']:>3}/{has:<3} {acc:>4}"
                     f" {c['wrong']:>2} {c['missing']:>8} {c['null_ok']:>8} {c['false_pos']:>7}"
                 )
+    if levels:
+        total = sum(lv.total for lv in levels)
+        accepted = sum(lv.total for lv in levels if lv.low >= VERIFY_BELOW)
+        out += [
+            "",
+            "Scored: right on every field the confidence covers (kind + expiry, or kind + issue",
+            "date for documents without an expiry), by confidence level:",
+        ]
+        for lv in levels:
+            hi = "1.00" if lv.high > 1 else f"{lv.high:.2f}"
+            acc = f"{100 * lv.right / lv.total:.0f}%" if lv.total else "-"
+            out.append(f"  {lv.low:.2f}-{hi}  {lv.right:>3}/{lv.total:<3} {acc:>5}")
+        wrong = accepted_but_wrong(levels)
+        out.append(
+            f"  Accepted without review (>= {VERIFY_BELOW}): {accepted}/{total};"
+            f" accepted but wrong: {len(wrong)}" + (f" ({', '.join(wrong)})" if wrong else "")
+        )
     out += ["", "Signals (expiry date right / cases):"]
     out += [f"  {name:<40} {tally}" for name, tally in sorted(tallies.items())]
 
@@ -348,12 +476,16 @@ def format_report(rows: Sequence[Row], tallies: Mapping[str, Tally]) -> str:
 
 
 def write_results(
-    rows: Sequence[Row], tallies: Mapping[str, Tally], path: Path = RESULTS_PATH
+    rows: Sequence[Row],
+    tallies: Mapping[str, Tally],
+    path: Path = RESULTS_PATH,
+    levels: Sequence[Level] = (),
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     data = {
         "rows": [asdict(r) for r in rows],
         "signals": {k: {"right": v.right, "total": v.total} for k, v in tallies.items()},
+        "confidence_levels": [asdict(lv) for lv in levels],
     }
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
@@ -368,12 +500,16 @@ def main(argv: Sequence[str] | None = None) -> None:
     predictors: dict[str, Predictor] = {"mrz": predict_mrz, "regex": predict_regex}
 
     extractor = None
+    extract: Extract | None = None
     if not args.no_llm:
         # Only the Ollama settings are used; the eval never talks to Paperless.
         settings = load_settings()
         extractor = OllamaExtractor(settings)
-        predictors["llm"] = llm_predictor(extractor)
+        extract = cached(extractor.extract)
+        predictors["llm"] = llm_predictor(extract)
         print(f"Running {len(cases)} cases with {settings.ollama_model}...", file=sys.stderr)
+
+    predictors["scored"] = scored_predictor(extract)
 
     try:
         rows, raw = evaluate(cases, predictors)
@@ -384,8 +520,9 @@ def main(argv: Sequence[str] | None = None) -> None:
             extractor.close()
 
     tallies = signals(cases, raw)
-    print(format_report(rows, tallies))
-    write_results(rows, tallies, RESULTS_PATH)
+    levels = confidence_levels(cases, rows, raw)
+    print(format_report(rows, tallies, levels))
+    write_results(rows, tallies, RESULTS_PATH, levels)
     print(f"\nFull results: {RESULTS_PATH.relative_to(EVALS_DIR.parent)}", file=sys.stderr)
 
 

@@ -10,7 +10,10 @@ from evals.generate import Sample
 from evals.run import (
     Case,
     Prediction,
+    accepted_but_wrong,
     build_cases,
+    cached,
+    confidence_levels,
     evaluate,
     expected_value,
     format_report,
@@ -20,12 +23,13 @@ from evals.run import (
     normalise_holder,
     outcome,
     predict_regex,
+    scored_predictor,
     signals,
     summarise,
     write_results,
 )
 from lifeadmin.config import Settings
-from lifeadmin.extract.llm import OllamaExtractor
+from lifeadmin.extract.llm import LlmBadResponse, LlmResult, OllamaExtractor
 
 # Made-up people and dates.
 PASSPORT = Sample(
@@ -184,7 +188,7 @@ def test_llm_predictor_turns_bad_reply_into_error_prediction():
     settings = Settings(paperless_url="http://p.test", paperless_token="fake")
     extractor = OllamaExtractor(settings, transport=httpx.MockTransport(handler))
 
-    pred = llm_predictor(extractor)("text")
+    pred = llm_predictor(extractor.extract)("text")
 
     assert pred.error and pred.expiry_date is None
 
@@ -202,3 +206,73 @@ def test_main_without_llm_never_needs_settings(tmp_path, monkeypatch, capsys):
 
     out = capsys.readouterr().out
     assert "regex" in out and "llm " not in out
+
+
+def test_cached_calls_the_llm_once_per_text_including_bad_replies():
+    calls = []
+
+    def extract(text):
+        calls.append(text)
+        if text == "bad":
+            raise LlmBadResponse("synthetic")
+        return LlmResult("t4", None, None, None)
+
+    wrapped = cached(extract)
+    wrapped("a")
+    wrapped("a")
+    for _ in range(2):
+        with pytest.raises(LlmBadResponse):
+            wrapped("bad")
+
+    assert calls == ["a", "bad"]
+
+
+def test_scored_predictor_combines_methods_and_reports_confidence():
+    text = "ONTARIO DRIVER'S LICENCE\n4a ISS 2024/03/14\n4b EXP 2029/03/14"
+    reply = LlmResult("drivers_licence", "Jane Q Tester", date(2024, 3, 14), date(2029, 3, 14))
+
+    without_llm = scored_predictor(None)(text)
+    with_llm = scored_predictor(lambda t: reply)(text)
+
+    assert without_llm.expiry_date == date(2029, 3, 14)
+    assert with_llm.confidence > without_llm.confidence >= 0.8
+
+
+def test_scored_predictor_treats_bad_llm_reply_as_no_answer():
+    def bad(text):
+        raise LlmBadResponse("synthetic")
+
+    text = "ONTARIO DRIVER'S LICENCE\n4b EXP 2029/03/14"
+    assert scored_predictor(bad)(text) == scored_predictor(None)(text)
+
+
+def test_confidence_levels_and_accepted_but_wrong():
+    cases = [Case(PASSPORT, "clean", "a"), Case(PASSPORT, "light-1", "b"), Case(T4, "clean", "c")]
+    answers = {
+        "a": Prediction(doc_kind="passport", expiry_date=date(2031, 6, 15), confidence=0.97),
+        "b": Prediction(doc_kind="passport", expiry_date=date(2031, 6, 16), confidence=0.9),
+        "c": Prediction(doc_kind="t4", confidence=0.3),
+    }
+    rows, raw = evaluate(cases, {"scored": lambda text: answers[text]})
+
+    levels = confidence_levels(cases, rows, raw)
+
+    assert [(lv.low, lv.right, lv.total) for lv in levels] == [
+        (0.95, 1, 1),
+        (0.8, 0, 1),
+        (0.5, 0, 0),
+        (0.0, 1, 1),
+    ]
+    assert accepted_but_wrong(levels) == ["passport-x/light-1"]
+    assert "accepted but wrong: 1 (passport-x/light-1)" in format_report(rows, {}, levels)
+
+
+def test_confidence_levels_check_issue_date_on_documents_without_expiry():
+    payslip = Sample(
+        id="payslip-x", kind="payslip", holder="Jane Tester", issue_date=date(2026, 10, 16)
+    )
+    cases = [Case(payslip, "heavy-1", "p")]
+    wrong_issue = Prediction(doc_kind="payslip", issue_date=date(2026, 10, 15), confidence=0.85)
+    rows, raw = evaluate(cases, {"scored": lambda text: wrong_issue})
+
+    assert accepted_but_wrong(confidence_levels(cases, rows, raw)) == ["payslip-x/heavy-1"]
