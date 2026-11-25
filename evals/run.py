@@ -40,7 +40,8 @@ from lifeadmin.extract.mrz import parse_mrz
 from lifeadmin.extract.patterns import find_dates, find_kind
 
 RESULTS_PATH = EVALS_DIR / "results" / "latest.json"
-NOISE_COPIES = 2
+COPIES_PER_LEVEL = 3
+GROUPS = ("clean", "light", "heavy")
 
 FieldName = Literal["doc_kind", "holder", "issue_date", "expiry_date"]
 FIELDS: tuple[FieldName, ...] = ("doc_kind", "holder", "issue_date", "expiry_date")
@@ -58,12 +59,13 @@ OUTCOMES: tuple[Outcome, ...] = ("correct", "wrong", "missing", "null_ok", "fals
 @dataclass(frozen=True)
 class Case:
     sample: Sample
-    variant: str  # "clean", "noise-1", ...
+    variant: str  # "clean", "light-1", "heavy-2", ...
     text: str = field(repr=False)
 
-    @property
-    def noisy(self) -> bool:
-        return self.variant != "clean"
+
+def group_of(variant: str) -> str:
+    """ "light-2" -> "light"."""
+    return variant.split("-")[0]
 
 
 @dataclass(frozen=True)
@@ -107,17 +109,19 @@ def load_ocr(sample_ids: Iterable[str], ocr_dir: Path = OCR_DIR) -> dict[str, st
 
 
 def build_cases(
-    samples: Sequence[Sample], texts: Mapping[str, str], copies: int = NOISE_COPIES
+    samples: Sequence[Sample], texts: Mapping[str, str], copies: int = COPIES_PER_LEVEL
 ) -> list[Case]:
-    """The clean text of each sample plus ``copies`` noised versions of it."""
+    """The clean text of each sample plus ``copies`` noised versions at each level."""
     cases = []
     for s in samples:
         cases.append(Case(s, "clean", texts[s.id]))
-        for n in range(1, copies + 1):
-            # crc32, not hash(): Python salts str hashes per process, which would change
-            # the noise on every run.
-            seed = zlib.crc32(f"{s.id}:{n}".encode())
-            cases.append(Case(s, f"noise-{n}", add_noise(texts[s.id], seed)))
+        for level in ("light", "heavy"):
+            for n in range(1, copies + 1):
+                variant = f"{level}-{n}"
+                # crc32, not hash(): Python salts str hashes per process, which would
+                # change the noise on every run.
+                seed = zlib.crc32(f"{s.id}:{variant}".encode())
+                cases.append(Case(s, variant, add_noise(texts[s.id], seed, level)))
     return cases
 
 
@@ -232,12 +236,12 @@ def evaluate(
 
 
 def summarise(rows: Iterable[Row]) -> dict[str, dict[str, dict[str, Counter[str]]]]:
-    """Outcome counts by method, then field, then "clean" / "noisy"."""
+    """Outcome counts by method, then field, then noise group."""
     table: dict[str, dict[str, dict[str, Counter[str]]]] = defaultdict(
         lambda: defaultdict(lambda: defaultdict(Counter))
     )
     for r in rows:
-        group = "clean" if r.variant == "clean" else "noisy"
+        group = group_of(r.variant)
         table[r.method][r.field][group][r.outcome] += 1
     return table
 
@@ -321,7 +325,7 @@ def format_report(rows: Sequence[Row], tallies: Mapping[str, Tally]) -> str:
     ]
     for method, fields in table.items():
         for f, groups in fields.items():
-            for group in ("clean", "noisy"):
+            for group in GROUPS:
                 c = groups.get(group, Counter())
                 has = c["correct"] + c["wrong"] + c["missing"]
                 acc = f"{100 * c['correct'] / has:.0f}%" if has else "-"

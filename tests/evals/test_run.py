@@ -74,10 +74,11 @@ def test_build_cases_adds_seeded_noisy_copies():
     first = build_cases([PASSPORT], {PASSPORT.id: text}, copies=2)
     second = build_cases([PASSPORT], {PASSPORT.id: text}, copies=2)
 
-    assert [c.variant for c in first] == ["clean", "noise-1", "noise-2"]
+    variants = ["clean", "light-1", "light-2", "heavy-1", "heavy-2"]
+    assert [c.variant for c in first] == variants
     assert first[0].text == text
     assert [c.text for c in first] == [c.text for c in second]
-    assert first[1].text != first[2].text
+    assert len({c.text for c in first}) == len(variants)
 
 
 def test_load_ocr_reports_missing_file(tmp_path):
@@ -121,19 +122,20 @@ def test_evaluate_scores_only_attempted_fields():
     assert raw[("passport-x", "clean", "mrz")] is None
 
 
-def test_summarise_splits_clean_and_noisy():
-    cases = [Case(T4, "clean", ""), Case(T4, "noise-1", ""), Case(T4, "noise-2", "")]
+def test_summarise_splits_by_noise_level():
+    cases = [Case(T4, "clean", ""), Case(T4, "light-1", ""), Case(T4, "heavy-1", "")]
     invented = Prediction(expiry_date=date(2030, 1, 1))
     rows, _ = evaluate(cases, {"llm": lambda text: invented if text == "" else None})
 
     expiry = summarise(rows)["llm"]["expiry_date"]
     assert expiry["clean"]["false_pos"] == 1
-    assert expiry["noisy"]["false_pos"] == 2
+    assert expiry["light"]["false_pos"] == 1
+    assert expiry["heavy"]["false_pos"] == 1
 
 
 def test_signals_track_agreement_between_regex_and_llm():
     agree = Case(PASSPORT, "clean", "agree")
-    disagree = Case(PASSPORT, "noise-1", "disagree")
+    disagree = Case(PASSPORT, "heavy-1", "disagree")
     right, wrong = date(2031, 6, 15), date(2031, 6, 16)
     predictors = {
         "regex": lambda text: Prediction(expiry_date=right),
