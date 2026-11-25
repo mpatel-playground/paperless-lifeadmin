@@ -5,7 +5,14 @@ from datetime import date
 import pytest
 
 from evals.generate import document_lines, load_samples
-from lifeadmin.extract.patterns import DateMatch, KindMatch, find_dates, find_kind
+from lifeadmin.extract.patterns import (
+    DateMatch,
+    FoundDate,
+    KindMatch,
+    find_all_dates,
+    find_dates,
+    find_kind,
+)
 
 
 def only(text: str) -> DateMatch:
@@ -397,3 +404,25 @@ def test_eval_sample_kinds(sample):
     assert match is not None
     assert match.doc_kind == sample.kind
     assert not match.ocr_corrected
+
+
+# --- find_all_dates ---
+
+
+def test_find_all_dates_needs_no_label():
+    text = "DOB 1990/03/14\nsome line 15 JUN 2031\nPrinted 2026-01-02"
+
+    assert [d.value for d in find_all_dates(text)] == [
+        date(1990, 3, 14),
+        date(2031, 6, 15),
+        date(2026, 1, 2),
+    ]
+
+
+def test_find_all_dates_flags_ocr_fixes_and_ambiguity():
+    assert find_all_dates("2O31-06-15") == [FoundDate(date(2031, 6, 15), True, False)]
+    assert find_all_dates("03/04/2029") == [FoundDate(date(2029, 4, 3), False, True)]
+
+
+def test_find_all_dates_ignores_accents_and_invalid_dates():
+    assert [d.value for d in find_all_dates("15 FÉV 2031 and 31/02/2029")] == [date(2031, 2, 15)]

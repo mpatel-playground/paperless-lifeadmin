@@ -6,6 +6,7 @@ The second extraction step, for documents without a valid MRZ:
   "Valid until", "Date d'expiration", ...) and leaves choosing between them to the
   confidence scorer.
 - ``find_kind`` names the document kind from known card-number formats and titles.
+- ``find_all_dates`` returns every date in the text, labelled or not, for grounding checks.
 
 Text is matched ignoring case and accents, because Paperless's OCR drops accents
 inconsistently. Inside dates and card numbers, common OCR swaps (``O`` for ``0``, ``l`` for
@@ -156,6 +157,28 @@ def find_dates(text: str) -> list[DateMatch]:
                     )
                 )
     return results
+
+
+@dataclass(frozen=True)
+class FoundDate:
+    """Any date in the text, labelled or not."""
+
+    value: date
+    ocr_corrected: bool
+    ambiguous: bool  # day and month could be swapped; ``value`` reads day first
+
+
+def find_all_dates(text: str) -> list[FoundDate]:
+    """Every valid date anywhere in OCR ``text``, in document order.
+
+    Unlike ``find_dates`` this needs no label. The confidence scorer uses it to check that
+    a date the LLM returned is really printed on the document ("grounding").
+    """
+    return [
+        FoundDate(d.value, d.ocr_corrected, d.ambiguous)
+        for line in _fold(text).splitlines()
+        for d in _dates_in(line)
+    ]
 
 
 def _take(
